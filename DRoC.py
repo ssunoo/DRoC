@@ -1,9 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    HarmBlockThreshold,
+    HarmCategory,
+)
 from langchain_ollama import ChatOllama
 from common import *
-from utils import context_or_tools_codes, context_gurobi_codes, write_code_to_file, merge_retriever
+from utils import context_or_tools_codes, context_gurobi_codes, write_code_to_file, merge_retriever, get_next_gemini_api_key
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_debug
 import warnings
@@ -21,6 +26,18 @@ def decomposer(problem, llm="gpt-4o"):
         )
     elif llm.startswith("gpt"):
         llm = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
     else:
@@ -51,6 +68,18 @@ def summarize_document(solver, keyword, context, llm="gpt-4o"):
         )
     elif llm.startswith("gpt"):
         llm = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )        
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
     else:
@@ -88,6 +117,7 @@ def summarize_document(solver, keyword, context, llm="gpt-4o"):
 
 
 def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
+    model = llm
     """Retrieve from example codes based on the constraint keywords of the problem."""
     llm_call = 0
     prompt = PromptTemplate(
@@ -104,11 +134,23 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
         llm = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )        
     else:
         raise NotImplementedError
     chain = prompt | llm
 
-    keywords = decomposer(problem)
+    keywords = decomposer(problem, model)
     if solver == "OR-tools":
         retriever = context_or_tools_codes()
         # retriever = merge_retriever()
@@ -124,7 +166,7 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
         summaries = []
         contexts_input = []
         for doc in docs:
-            summary_context = summarize_document(solver, keyword, doc)
+            summary_context = summarize_document(solver, keyword, doc, model)
             llm_call += 1
             if summary_context.relevance == "yes":
                 contexts.append(doc)
@@ -156,6 +198,18 @@ def self_debug(state: code, input: dict, llm="gpt-4o"):
         model = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
     elif llm.startswith("claude"):
         model = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        model = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )        
     else:
         raise NotImplementedError
 
@@ -217,6 +271,18 @@ def retrieval_augmented_generate(input: dict, context: dict, llm="gpt-4o"):
         model = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
     elif llm.startswith("claude"):
         model = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        model = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )        
     else:
         raise NotImplementedError
     chain = prompt_template_gen | model.with_structured_output(code)
@@ -258,6 +324,18 @@ def retrieval_augmented_refine(input: dict, context: dict, state: code, llm="gpt
         model = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
     elif llm.startswith("claude"):
         model = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        model = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )        
     else:
         raise NotImplementedError
     chain = prompt_template_ref | model.with_structured_output(code)
@@ -274,17 +352,21 @@ def retrieval_augmented_refine(input: dict, context: dict, state: code, llm="gpt
 
 class System():
     def __init__(self, input, params, llm):
+        # print("a"*40)
         self.input = input
         self.params = params
         self.llm = llm
         self.max_iteration = 4
         self.retrieval_flag = False
+        # print(self.llm)
         ret = context_or_tools_codes() if input['solver'] == "OR-tools" else context_gurobi_codes()
+        # print("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         # ret = merge_retriever() if input['solver'] == "OR-tools" else context_gurobi_codes()
         self.retriever = create_retriever_tool(ret,
         "retrieve_example_code",
         "Search and return example Python code for solving similar vehicle routing problems. Use it when the error is caused by incorrect use of solver API.",
         )
+        # print("c"*40)
         self.context = None
         self.optimum = input['optimum']
 
@@ -318,6 +400,18 @@ Structure your answer with a description of the code solution, and then list the
         elif self.llm.startswith("claude"):
             llm = ChatAnthropic(model=self.llm,
                                 temperature=0.0, max_tokens=8000)
+        elif self.llm.startswith("gemini"):
+            llm = ChatGoogleGenerativeAI(
+                model=self.llm,
+                google_api_key = get_next_gemini_api_key(),
+                temperature=0,
+                max_tokens=8000,
+                timeout=None,
+                max_retries=0,
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                },
+            )                    
         else:
             raise NotImplementedError
         chain = prompt_template_gen | llm.with_structured_output(code)
@@ -356,13 +450,25 @@ Structure your answer with a description of the code solution, and then list the
         elif self.llm.startswith("claude"):
             llm = ChatAnthropic(model=self.llm,
                                 temperature=0.0, max_tokens=5000)
+        elif self.llm.startswith("gemini"):
+            llm = ChatGoogleGenerativeAI(
+                model=self.llm,
+                google_api_key = get_next_gemini_api_key(),
+                temperature=0,
+                max_tokens=5000,
+                timeout=None,
+                max_retries=0,
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                },
+            )            
         else:
             raise NotImplementedError
         model = prompt | llm
         res = model.invoke({"problem": input['problem'], "solver": input['solver'], "message": state["messages"]}).content
         if res == "1":
             print("======Retrieval_augmented_refine======")
-            res_new = retrieval_augmented_refine(input, self.context, state)
+            res_new = retrieval_augmented_refine(input, self.context, state, self.llm)
         elif res == "2":
             print("======SELF-DEBUG======")
             res_new = self_debug(state, input, self.llm)

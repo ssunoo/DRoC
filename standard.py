@@ -8,6 +8,12 @@ from langchain_anthropic import ChatAnthropic
 import time
 import getpass
 from langchain_groq import ChatGroq
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    HarmBlockThreshold,
+    HarmCategory,
+)
+from utils import get_next_gemini_api_key
 
 set_debug(False)
 
@@ -28,6 +34,19 @@ def run(params_dict, input, optimal, model, max_iterations=3, self_debug=True):
             temperature=0,
             max_tokens=None
         )
+    elif model.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )         
+
 
     pm = """
              Respond with the syntactically correct code for solving a {problem} using {solver}. Make sure you follow these rules:

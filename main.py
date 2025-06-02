@@ -45,8 +45,6 @@ def setup_environment(args: argparse.Namespace) -> None:
     # You can add your API key setup here if needed
     os.environ["ANTHROPIC_API_KEY"] = "your-key-here"
 
-    # os.environ["OPENAI_API_KEY"] = "your-key-here"
-
 
 def get_problem_indices(args: argparse.Namespace, total_problems: int) -> Tuple[int, int]:
     """Get the start and end indices for problem processing."""
@@ -99,13 +97,13 @@ def run_evaluation(args: argparse.Namespace,
                 no_runtime_error, accurate = system.run()
             elif method == 'standard':
                 no_runtime_error, accurate = run(params[i], current_input, optimums[i], args.llm,
-                                                 max_iterations=args.max_iterations, self_debug=False)
+                                                max_iterations=args.max_iterations, self_debug=False)
             elif method == 'self_debug':
                 no_runtime_error, accurate = run(params[i], current_input, optimums[i], args.llm,
-                                                 max_iterations=args.max_iterations, self_debug=True)
+                                                max_iterations=args.max_iterations, self_debug=True)
             else:
                 raise ValueError(f"Invalid method: {method}")
-
+            
             if not no_runtime_error:
                 runtime_error_tasks.append(problem_name)
             if accurate:

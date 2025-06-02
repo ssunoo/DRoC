@@ -20,7 +20,23 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from common import commented_code
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    HarmBlockThreshold,
+    HarmCategory,
+)
 
+gemini_api_key = []
+
+def gemini_api_key_generator():
+    while True:
+        for key in gemini_api_key:
+            yield key
+
+_gemini_key_gen = gemini_api_key_generator()
+
+def get_next_gemini_api_key():
+    return next(_gemini_key_gen)
 
 def context_or_tools_web_docs():
     path = "./chroma_db/document"
@@ -205,6 +221,18 @@ Please directly return the commented code snippet and do not change the code and
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm,
                             temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=5000,
+            timeout=None,
+            max_retries=0,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )         
     else:
         raise NotImplementedError
     chain = prompt_template_gen | llm.with_structured_output(commented_code)
