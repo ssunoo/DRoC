@@ -39,12 +39,11 @@ def run(params_dict, input, optimal, model, max_iterations=3, self_debug=True):
             model=model,
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in model else None,
+            thinking_budget=4000 if '2.5' in model else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )         
 
 

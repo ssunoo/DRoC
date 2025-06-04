@@ -8,7 +8,7 @@ from langchain_google_genai import (
 )
 from langchain_ollama import ChatOllama
 from common import *
-from utils import context_or_tools_codes, context_gurobi_codes, write_code_to_file, merge_retriever, get_next_gemini_api_key
+from utils import context_or_tools_codes, context_gurobi_codes, write_code_to_file, merge_retriever, get_next_gemini_api_key, write_error_code_to_file
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_debug
 import warnings
@@ -32,11 +32,10 @@ def decomposer(problem, llm="gpt-4o"):
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
             max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
@@ -61,6 +60,8 @@ def decomposer(problem, llm="gpt-4o"):
 
 
 def summarize_document(solver, keyword, context, llm="gpt-4o"):
+    print("**********************************************Summarize_document")
+    # print(context)
     if llm.startswith("llama"):
         llm = ChatOllama(
             model=llm,
@@ -74,11 +75,10 @@ def summarize_document(solver, keyword, context, llm="gpt-4o"):
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
             max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )        
     elif llm.startswith("claude"):
         llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
@@ -113,11 +113,14 @@ def summarize_document(solver, keyword, context, llm="gpt-4o"):
 
     result = chain.invoke({"solver": solver, "context": context, "keyword": keyword})
 
+    # print(f"***********************************summarize result:\n {result}")
+
     return result
 
 
 def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
     model = llm
+    print("*****************************************branched_generate")
     """Retrieve from example codes based on the constraint keywords of the problem."""
     llm_call = 0
     prompt = PromptTemplate(
@@ -139,18 +142,18 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
             model=llm,
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
+            include_thoughts= False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )        
     else:
         raise NotImplementedError
     chain = prompt | llm
 
     keywords = decomposer(problem, model)
+    print(f"Decompose result: \n {keywords}")
     if solver == "OR-tools":
         retriever = context_or_tools_codes()
         # retriever = merge_retriever()
@@ -174,8 +177,11 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
                 contexts_input.append(doc.page_content + '\n' + summary_context.summary)
         contexts = [c.page_content for c in contexts]
         if len(contexts) > 1:
+            print("****************************Second Filter*****************************")
             filter_context = " \n ====== \n ".join(contexts_input)
+            print(f"Length: {len(filter_context)} and context length: {len(contexts)}")
             idx = chain.invoke({"solver": solver, "contexts": filter_context, "keyword": keyword}).content
+            # print("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
             llm_call += 1
             try:
                 idx = int(idx) - 1
@@ -190,6 +196,47 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
     print("============Context filter successful! LLM call " + str(llm_call) + " times============")
     return keyword_context, keyword_summary
 
+def constraint_filter(py_code, contexts, solver="or-tools", llm="gpt-4o"):
+    model = llm
+    print("*****************************************constraint_filter")
+    keywords = contexts.keys()
+    """Filter example codes based on the code and constraint keywords of the problem."""
+    if llm.startswith("gpt"):
+        llm = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
+    elif llm.startswith("claude"):
+        llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=None,
+            include_thoughts= False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
+            timeout=None,
+            max_retries=5,
+        )        
+    else:
+        raise NotImplementedError
+
+    unmet_keywords = []
+    summaries = []
+    for keyword in keywords:
+        summary_context = summarize_document(solver, keyword, py_code, model)
+        print(f"{keyword}: {summary_context.relevance}")
+        if summary_context.relevance == "no":
+            print(keyword)
+            unmet_keywords.append(keyword)
+
+        summaries.append(summary_context.code_snippet + '\n' + summary_context.summary)
+
+    print(f"Unmet keywords: {unmet_keywords}\n")
+    meet_keywords = list(set(keywords) - set(unmet_keywords))
+    print(f"met keywords: {meet_keywords}\n")
+    meet_keywords_context = {k: contexts[k] for k in keywords if k in meet_keywords}
+    unmet_keywords_context = {k: contexts[k] for k in keywords if k in unmet_keywords}
+    print(f"============Constraint filter successful! meet: {len(meet_keywords_context)}, unmet: {len(unmet_keywords_context)}============")
+    return meet_keywords_context, unmet_keywords_context
 
 def self_debug(state: code, input: dict, llm="gpt-4o"):
     """Call to fix the error of the code based on an LLM when there are syntax error, incomplete program, or other errors."""
@@ -203,12 +250,11 @@ def self_debug(state: code, input: dict, llm="gpt-4o"):
             model=llm,
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )        
     else:
         raise NotImplementedError
@@ -240,6 +286,7 @@ Then list the imports. Finally list the functioning code block and solve the pro
 
 def retrieval_augmented_generate(input: dict, context: dict, llm="gpt-4o"):
     """Call to generate a new program for solving the problem, drawing upon the retrieved code in the context."""
+    print("*****************************************retrieval_augmented_generate")
     prompt_template_gen = ChatPromptTemplate.from_messages(
         [
             (
@@ -276,12 +323,11 @@ def retrieval_augmented_generate(input: dict, context: dict, llm="gpt-4o"):
             model=llm,
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )        
     else:
         raise NotImplementedError
@@ -292,7 +338,13 @@ def retrieval_augmented_generate(input: dict, context: dict, llm="gpt-4o"):
         c += "Constraint: " + keyword + "\nExample code: " + context[keyword] + "===============\n"
     input['context'] = c
 
-    return chain.invoke(input)
+    try:
+        result = chain.invoke(input)
+    except OutputParserException as e:
+        print("⚠️ LLM output does not match the expected structure.")
+        print("Raw output:", e.output)  # 原始文字
+
+    return result
 
 
 def retrieval_augmented_refine(input: dict, context: dict, state: code, llm="gpt-4o"):
@@ -329,12 +381,11 @@ def retrieval_augmented_refine(input: dict, context: dict, state: code, llm="gpt
             model=llm,
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )        
     else:
         raise NotImplementedError
@@ -349,6 +400,68 @@ def retrieval_augmented_refine(input: dict, context: dict, state: code, llm="gpt
 
     return chain.invoke(input)
 
+def retrieval_filter_augmented_refine(input: dict, context: dict, state: code, llm="gpt-4o"):
+    """Call to refine the current generated code, which is with error, drawing upon the retrieved code in the context."""
+    prompt_template_ref = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are responsible for refining the code with errors, which tries to solve {problem} by calling {solver} in Python."""
+            ),
+            ("user",
+             """
+            The code snippet with the bug is as <{prep_code}>.\n
+            Here is the error message of the code: <{message}>.\n
+            Make sure you follow these rules:
+            1. You can first reason about the error, and then refine the code and return the whole fixed function.
+            2. The meet context provides examples of solving problems with already satisfied constraints, referring to the relevant parts and keeping the code consistent accordingly: <{meet_context}>.\n
+            3. The unmet context provides examples of solving problems with unsatisfied constraints, referring to the relevant parts and modifying the code accordingly: <{unmet_context}>.\n
+            4. Do not give additional examples or define the main function for testing.
+            5. Return the objective value of the problem by the 'solve' function.
+            6. Ensure any code you provide can be executed with all required imports and variables defined.
+
+            Structure your answer with a description of the code solution, then list the imports, and finally list the functioning code block.
+                     """
+             ),
+            ("placeholder", "{messages}")
+        ]
+    )
+    if llm.startswith("gpt"):
+        model = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
+    elif llm.startswith("claude"):
+        model = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    elif llm.startswith("gemini"):
+        model = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
+            timeout=None,
+            max_retries=5,
+        )        
+    else:
+        raise NotImplementedError
+    chain = prompt_template_ref | model.with_structured_output(code)
+
+
+    input['prep_code'] = state['generation'].imports + "\n" + state['generation'].code
+    input['message'] = state['messages']
+
+    meet_context, unmet_context = constraint_filter(input['prep_code'], context, input['solver'], llm)
+
+    meet_c = ""
+    for keyword in meet_context.keys():
+        meet_c += "Constraint: " + keyword + "\nExample code: " + meet_context[keyword] + "===============\n"
+    input['meet_context'] = meet_c
+
+    unmet_c = ""
+    for keyword in unmet_context.keys():
+        unmet_c += "Constraint: " + keyword + "\nExample code: " + unmet_context[keyword] + "===============\n"
+    input['unmet_context'] = unmet_c
+
+    return chain.invoke(input)
 
 class System():
     def __init__(self, input, params, llm):
@@ -371,6 +484,7 @@ class System():
         self.optimum = input['optimum']
 
     def standard_generator(self):
+        print(f"**************************************Standard_generator")
         prompt_template_gen = ChatPromptTemplate.from_messages(
             [
                 (
@@ -405,16 +519,16 @@ Structure your answer with a description of the code solution, and then list the
                 model=self.llm,
                 google_api_key = get_next_gemini_api_key(),
                 temperature=0,
-                max_tokens=8000,
+                max_tokens=None,
+                include_thoughts=False if '2.5' in self.llm else None,
+                thinking_budget=7000 if '2.5' in self.llm else None,
+                verbose=True,
                 timeout=None,
-                max_retries=0,
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
+                max_retries=5,
             )                    
         else:
             raise NotImplementedError
-        chain = prompt_template_gen | llm.with_structured_output(code)
+        chain = prompt_template_gen | llm.with_structured_output(code)        
         result = chain.invoke(self.input)
 
         state = GraphState(error='', messages=[], generation=result, iterations=0)
@@ -444,6 +558,7 @@ Structure your answer with a description of the code solution, and then list the
         """,
             input_variables=["problem", "solver", "message"])
 
+        print("*****************************************AGENT")
         # Choose the LLM that will drive the agent
         if self.llm.startswith("gpt"):
             llm = ChatOpenAI(model=self.llm, temperature=0.0, verbose=True)
@@ -455,12 +570,11 @@ Structure your answer with a description of the code solution, and then list the
                 model=self.llm,
                 google_api_key = get_next_gemini_api_key(),
                 temperature=0,
-                max_tokens=5000,
+                max_tokens=None,
+                include_thoughts=False if '2.5' in self.llm else None,
+                thinking_budget=4000 if '2.5' in self.llm else None,
                 timeout=None,
-                max_retries=0,
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
+                max_retries=5,
             )            
         else:
             raise NotImplementedError
@@ -468,7 +582,8 @@ Structure your answer with a description of the code solution, and then list the
         res = model.invoke({"problem": input['problem'], "solver": input['solver'], "message": state["messages"]}).content
         if res == "1":
             print("======Retrieval_augmented_refine======")
-            res_new = retrieval_augmented_refine(input, self.context, state, self.llm)
+            # res_new = retrieval_augmented_refine(input, self.context, state, self.llm)
+            res_new = retrieval_filter_augmented_refine(input, self.context, state, self.llm)
         elif res == "2":
             print("======SELF-DEBUG======")
             res_new = self_debug(state, input, self.llm)
@@ -484,7 +599,6 @@ Structure your answer with a description of the code solution, and then list the
         no_run_time_error = False
         accu_solution = False
         state = self.standard_generator()
-        print(state)
         if state['error'] == 'no':
             no_run_time_error = True
             accu_solution = True
@@ -492,8 +606,13 @@ Structure your answer with a description of the code solution, and then list the
             return no_run_time_error, accu_solution
         while iter < self.max_iteration:
             iter += 1
+            print(f"=================================Iteration: {iter}======================================\n")
             if state['error'] != 'no':
                 message = state['messages']
+                try:
+                    write_error_code_to_file(self.input['problem'], state['generation'].imports, state['generation'].code, self.llm, message)
+                except:
+                    pass                
                 if len(message[0]) > 1:
                     if ("The obj. is far from the optimum" in message[0][1]
                             or "You did not finish the function" in message[0][
@@ -501,8 +620,9 @@ Structure your answer with a description of the code solution, and then list the
                         no_run_time_error = True
                 if self.context is None:
                     # If fail, conduct RAG for the first round
+                    print("*****************************************Retrieval")
                     self.context, summary = branched_retriever(self.input['problem'], self.input['solver'], self.llm)
-                    print(self.context)
+                    print(f"Retrieve context: \n {self.context}")
                     res = retrieval_augmented_generate(self.input, self.context, self.llm)
                     state = GraphState(error='', messages=[], generation=res, iterations=iter)
                     state = code_check(state, self.params, self.optimum)
@@ -510,6 +630,7 @@ Structure your answer with a description of the code solution, and then list the
                     # agentic operation
                     state = self.agent(self.input, self.params, state)
                 print(state)
+
             else:
                 no_run_time_error = True
                 accu_solution = True

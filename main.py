@@ -5,6 +5,7 @@ from common import get_dataset
 from DRoC import System
 from utils import context_all
 from standard import run
+from tqdm import tqdm
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +29,7 @@ def parse_args() -> argparse.Namespace:
                         help='Skip problems that already have generated solutions')
 
     # System configuration
-    parser.add_argument('--output_dir', type=str, default='generated_codes',
+    parser.add_argument('--output_dir', type=str, default='/disks/local/r.2t_6/r13922049/DRoC/data/OR-tools/gene_codes',
                         help='Directory to save generated code')
     parser.add_argument('--max_iterations', type=int, default=4,
                         help='Maximum number of refinement iterations')
@@ -44,6 +45,7 @@ def setup_environment(args: argparse.Namespace) -> None:
 
     # You can add your API key setup here if needed
     os.environ["ANTHROPIC_API_KEY"] = "your-key-here"
+
 
 
 def get_problem_indices(args: argparse.Namespace, total_problems: int) -> Tuple[int, int]:
@@ -76,10 +78,11 @@ def run_evaluation(args: argparse.Namespace,
 
     start_idx, end_idx = get_problem_indices(args, len(names))
 
-    for i in range(start_idx, end_idx):
+    for i in tqdm(range(start_idx, end_idx)):
         problem_name = names[i]
 
         if args.skip_existing and problem_name in existing_solutions:
+            successful_tasks.append(problem_name)
             print(f"Skipping {problem_name} - solution already exists")
             continue
 

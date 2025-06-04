@@ -171,6 +171,7 @@ def code_check(state: GraphState, param_dict: dict, optimal:float):
     """
 
     print("---CHECKING CODE---")
+    # print(state)
 
     # State
     messages = state["messages"]
@@ -178,8 +179,21 @@ def code_check(state: GraphState, param_dict: dict, optimal:float):
     iterations = state["iterations"]
 
     # Get solution components
-    imports = code_solution.imports
-    code = code_solution.code
+    try:
+        imports = code_solution.imports
+        code_sol = code_solution.code
+    except Exception as e:
+        print("---STRUCTURE OUTPUT CHECK: FAILED---")
+        error_message = [("user", f"Your solution failed the structure output test: {e}")]
+        messages += error_message
+        empty_code = code(prefix="", imports="", code="")
+        return {
+            "generation": empty_code,
+            "messages": messages,
+            "iterations": iterations,
+            "error": "yes",
+        }
+        
 
     # Check imports
     try:
@@ -199,7 +213,7 @@ def code_check(state: GraphState, param_dict: dict, optimal:float):
     try:
         globals_dict = param_dict.copy()
         # avoid running code in exec, otherwise the code may stuck
-        revised_code = remove_line_with_routing_solve(code)
+        revised_code = remove_line_with_routing_solve(code_sol)
         params_str = ', '.join(f"{key}={repr(value)}" for key, value in globals_dict.items())
         revised_code = revised_code + f"\nsolve({params_str})"
         check_unused_parameters(revised_code)
@@ -220,7 +234,7 @@ def code_check(state: GraphState, param_dict: dict, optimal:float):
             pass
     # Check execution
     try:
-        sol = write_and_run(imports + "\n" + code, param_dict)
+        sol = write_and_run(imports + "\n" + code_sol, param_dict)
         if type(sol) != float:
             if type(sol) == str:
                 if 'Error' in sol:

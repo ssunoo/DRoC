@@ -26,7 +26,6 @@ from langchain_google_genai import (
     HarmCategory,
 )
 
-gemini_api_key = []
 
 def gemini_api_key_generator():
     while True:
@@ -223,15 +222,12 @@ Please directly return the commented code snippet and do not change the code and
                             temperature=0.0, max_tokens=5000)
     elif llm.startswith("gemini"):
         llm = ChatGoogleGenerativeAI(
-            model=llm,
+            model="gemini-2.0-flash-lite",
             google_api_key = get_next_gemini_api_key(),
             temperature=0,
-            max_tokens=5000,
+            max_tokens=None,
             timeout=None,
-            max_retries=0,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            },
+            max_retries=5,
         )         
     else:
         raise NotImplementedError
@@ -243,6 +239,13 @@ Please directly return the commented code snippet and do not change the code and
 def write_code_to_file(problem, imports, code, llm):
     file_path = f"./data/OR-tools/gene_codes/{problem}.py"
     code_string = "# " + problem + "\n" + imports + "\n" + code
+    new_code_string = commenter(code_string, llm).code
+    with open(file_path, "w") as file:
+        file.write(new_code_string)
+
+def write_error_code_to_file(problem, imports, code, llm, message):
+    file_path = f"./data/OR-tools/error_code/{problem}.py"
+    code_string = "# " + problem + "\n" + f"# {message}\n" + imports + "\n" + code
     new_code_string = commenter(code_string, llm).code
     with open(file_path, "w") as file:
         file.write(new_code_string)

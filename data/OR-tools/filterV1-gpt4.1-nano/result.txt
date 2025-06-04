@@ -1,0 +1,4 @@
+Evaluation Results:
+Total problems tested: 48
+Successful solutions: 15 (31.25%)
+Runtime errors: 12 (25.00%)
