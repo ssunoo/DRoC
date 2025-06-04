@@ -117,6 +117,64 @@ def summarize_document(solver, keyword, context, llm="gpt-4o"):
 
     return result
 
+def check_constraint(solver, keyword, context, py_code, llm="gpt-4o"):
+    print("**********************************************check_constraint")
+    # print(context)
+    if llm.startswith("llama"):
+        llm = ChatOllama(
+            model=llm,
+            temperature=0,
+        )
+    elif llm.startswith("gpt"):
+        llm = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
+    elif llm.startswith("gemini"):
+        llm = ChatGoogleGenerativeAI(
+            model=llm,
+            google_api_key = get_next_gemini_api_key(),
+            temperature=0,
+            max_tokens=None,
+            include_thoughts=False if '2.5' in llm else None,
+            thinking_budget=4000 if '2.5' in llm else None,
+            timeout=None,
+            max_retries=5,
+        )        
+    elif llm.startswith("claude"):
+        llm = ChatAnthropic(model=llm, temperature=0.0, max_tokens=5000)
+    else:
+        raise NotImplementedError("llm not supported!")
+
+    # Data model
+    class advise(BaseModel):
+        """Fullfill constraint for given code or not."""
+        fullfill: str = Field(description="if it fullfill constraint 'yes' or 'no'")
+        advise: str = Field(description="textual summary on how to correctly program a specific constraint")
+
+    model = llm.with_structured_output(advise)
+
+    # Prompt
+    prompt = PromptTemplate(
+        template="""You are an expert in Python programming and {solver} for vehicle routing problem. \n
+        I will give you a retrieved documents related to constraint {keyword}, and you will firstly assess if the solve function includes Python code to program {keyword}. \n
+        If so, you should explain how the code address the constraint of {keyword}. \n
+        Here is the retrieved document: \n\n {context} \n\n
+        Here is the solve function: \n\n {py_code} \n\n
+        If the document contains Python code related to {keyword}, grade it as fullfill. \n
+        If not, you should produce an explanation on how to program the constraint of {keyword}. \n
+        Your goal is to make other programmers know how to do that. \n
+        Structure your answer with the binary score 'yes' or 'no' to indicate whether the document is fullfill constraint, and then give the adivse. \n
+        If the document is not fullfill constraint, just return 'no' for the binary score, and give the revising advise.""",
+        input_variables=["solver", "context", "keyword"],
+    )
+
+    # Chain
+    chain = prompt | model
+
+    result = chain.invoke({"solver": solver, "context": context, "keyword": keyword, "py_code": py_code})
+
+    print(f"***********************************check constraint result:\n {result}")
+
+    return result
+
 
 def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
     model = llm
@@ -179,7 +237,7 @@ def branched_retriever(problem, solver="or-tools", llm="gpt-4o"):
         if len(contexts) > 1:
             print("****************************Second Filter*****************************")
             filter_context = " \n ====== \n ".join(contexts_input)
-            print(f"Length: {len(filter_context)} and context length: {len(contexts)}")
+            # print(f"Length: {len(filter_context)} and context length: {len(contexts)}")
             idx = chain.invoke({"solver": solver, "contexts": filter_context, "keyword": keyword}).content
             # print("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
             llm_call += 1
@@ -220,27 +278,27 @@ def constraint_filter(py_code, contexts, solver="or-tools", llm="gpt-4o"):
         raise NotImplementedError
 
     unmet_keywords = []
-    summaries = []
+    advise = {}
     for keyword in keywords:
-        summary_context = summarize_document(solver, keyword, py_code, model)
-        print(f"{keyword}: {summary_context.relevance}")
-        if summary_context.relevance == "no":
+        check_context = check_constraint(solver, keyword, py_code, model)
+        print(f"{keyword}: {check_context.fullfill}")
+        if check_context.fullfill == "no":
             print(keyword)
             unmet_keywords.append(keyword)
 
-        summaries.append(summary_context.code_snippet + '\n' + summary_context.summary)
+        advise[keyword] = check_context.advise
 
     print(f"Unmet keywords: {unmet_keywords}\n")
     meet_keywords = list(set(keywords) - set(unmet_keywords))
     print(f"met keywords: {meet_keywords}\n")
-    meet_keywords_context = {k: contexts[k] for k in keywords if k in meet_keywords}
-    unmet_keywords_context = {k: contexts[k] for k in keywords if k in unmet_keywords}
+    meet_keywords_context = {k: f"{contexts[k]} \n\n Advise: {advise[k]} \n" for k in keywords if k in meet_keywords}
+    unmet_keywords_context = {k: f"{contexts[k]} \n\n Advise: {advise[k]} \n" for k in keywords if k in unmet_keywords}
     print(f"============Constraint filter successful! meet: {len(meet_keywords_context)}, unmet: {len(unmet_keywords_context)}============")
     return meet_keywords_context, unmet_keywords_context
 
 def self_debug(state: code, input: dict, llm="gpt-4o"):
     """Call to fix the error of the code based on an LLM when there are syntax error, incomplete program, or other errors."""
-
+    print("**********************************self_debug")
     if llm.startswith("gpt"):
         model = ChatOpenAI(model=llm, temperature=0.0, verbose=True)
     elif llm.startswith("claude"):
@@ -445,11 +503,13 @@ def retrieval_filter_augmented_refine(input: dict, context: dict, state: code, l
         raise NotImplementedError
     chain = prompt_template_ref | model.with_structured_output(code)
 
-
+    ori_input = input.copy()
     input['prep_code'] = state['generation'].imports + "\n" + state['generation'].code
     input['message'] = state['messages']
 
     meet_context, unmet_context = constraint_filter(input['prep_code'], context, input['solver'], llm)
+    if len(unmet_context) == 0:
+        return self_debug(state, ori_input, llm)
 
     meet_c = ""
     for keyword in meet_context.keys():
